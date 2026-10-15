@@ -62,12 +62,15 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
               cell.userInteractionEnabled = NO;
               cell.contentView.hidden = YES;
             } else if ([target isKindOfClass:[UIControl class]]) {
-              // 自绘按钮/控件：再往上一层隐藏（连箭头/同行内容一起）
+              // 自绘按钮/控件
               UIView *parent = target.superview;
-              if (parent && parent != root && parent.frame.size.height < 140) {
+              if (parent && parent != root && parent.superview != root &&
+                  parent.frame.size.height < 140) {
+                // 列表内的项：连箭头/同行内容一起隐藏
                 parent.hidden = YES;
                 parent.userInteractionEnabled = NO;
               } else {
+                // tab 栏/工具栏等根容器直接子视图：只隐藏按钮本身，避免整栏消失
                 target.hidden = YES;
                 target.userInteractionEnabled = NO;
               }
@@ -140,8 +143,10 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
 %hook UIViewController
 - (void)viewDidAppear:(BOOL)animated {
   %orig;
-  // 全页面移除含"稻壳"的 tab 按钮/cell
-  kw_hide_text_views(self.view, @[@"稻壳"], NO);
+  // 全页面：稻壳儿 tab / 首页共享、星标 / 文档三点弹窗按钮
+  kw_hide_text_views(self.view, @[@"稻壳", @"共享", @"星标"], NO);
+  kw_hide_text_views(self.view, @[@"立即上传", @"分享给好友", @"上传至云文档",
+                                  @"输出为长图片", @"超级PPT", @"更多应用"], NO);
   // "我的"页面移除云端/会员功能项
   NSString *cn = NSStringFromClass([self class]);
   if ([cn hasPrefix:@"KWMe"]) {
