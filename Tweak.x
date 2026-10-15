@@ -35,7 +35,35 @@
        [u hasPrefix:@"http://[::1]"] ||
        [u hasPrefix:@"https://[::1]"])) {
     %orig;   // 本地地址放行
+    return;
   }
-  // 其余网络请求直接丢弃，不发包
+  // 其余网络请求：不发包，直接 cancel（触发完成回调，避免 UI 无限转圈）
+  [self cancel];
+}
+%end
+
+/* ---------- 3. 移除主界面"稻壳儿"tab ---------- */
+%hook KWPhoneMainTabBarController
+- (void)viewDidLoad {
+  %orig;
+  if ([self respondsToSelector:@selector(viewControllers)]) {
+    NSArray *vcs = [self viewControllers];
+    if (vcs.count > 0) {
+      NSMutableArray *keep = [NSMutableArray array];
+      for (UIViewController *vc in vcs) {
+        NSString *t = vc.title ?: @"";
+        if (t.length == 0 && [vc respondsToSelector:@selector(tabBarItem)]) {
+          t = vc.tabBarItem.title ?: @"";
+        }
+        if ([t containsString:@"稻壳"]) {
+          continue;   // 跳过稻壳儿 tab
+        }
+        [keep addObject:vc];
+      }
+      if (keep.count > 0 && keep.count != vcs.count) {
+        self.viewControllers = keep;
+      }
+    }
+  }
 }
 %end
