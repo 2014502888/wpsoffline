@@ -1,18 +1,19 @@
 #import <UIKit/UIKit.h>
 
-/* WPS 私有类声明（自绘 tab 体系） */
+/* WPS 私有类声明 */
 @interface KWPublicViewController : UIViewController @end
 @interface KWMeViewController : KWPublicViewController @end
 @interface KWTabBarController : UIViewController @end
 @interface KWPhoneMainTabBarController : KWTabBarController @end
 
 /* =========================================================
- * WPS Office 离线化 tweak v6
- * 1. VIP 解锁（合并自 wpsofficevip.dylib 逆向）
- * 2. 禁网：NSURLSessionTask 白名单外全拦（cancel 回调）
- * 3. 登录跳转拦截（scheme + 微信/QQ 域名）
- * 4. 视图树遍历彻底移除：稻壳儿 tab / "我的"页功能项（含箭头与空白）
- * 5. 首页右上角"证"按钮移除（精确匹配）
+ * WPS Office 离线化 tweak v8
+ * 1. VIP 解锁
+ * 2. 禁网：NSURLSessionTask 白名单外全拦
+ * 3. 登录跳转拦截（scheme + 域名）
+ * 4. 视图树遍历移除（tab 容器按类名识别，不误杀整栏）
+ * 5. 右上角"证"按钮（遍历 navigationBar）
+ * 6. 弹窗按钮（延迟 0.6s 遍历 keyWindow 覆盖弹窗层）
  * ========================================================= */
 
 /* ---------- 通用：第三方登录跳转是否拦截 ---------- */
@@ -33,7 +34,7 @@ static BOOL kw_block_third_login(NSURL *url) {
   return NO;
 }
 
-/* ---------- 通用：视图树遍历移除（cell 去箭头+隐藏；自绘项隐藏上层容器） ---------- */
+/* ---------- 通用：视图树遍历移除 ---------- */
 static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
   if (!root) return;
   for (UIView *sub in root.subviews) {
@@ -43,7 +44,6 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
         for (NSString *k in kws) {
           BOOL hit = exact ? [t isEqualToString:k] : [t containsString:k];
           if (hit) {
-            // 向上找可交互祖先（cell/按钮）
             UIView *v = sub;
             UIView *last = sub;
             while (v && !([v isKindOfClass:[UIControl class]] ||
@@ -54,7 +54,6 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
             }
             UIView *target = v ?: last;
             if ([target isKindOfClass:[UITableViewCell class]]) {
-              // UITableView cell：去箭头 + 隐藏整个 cell（含背景）
               UITableViewCell *cell = (UITableViewCell *)target;
               cell.accessoryType = UITableViewCellAccessoryNone;
               cell.accessoryView = nil;
@@ -62,15 +61,17 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
               cell.userInteractionEnabled = NO;
               cell.contentView.hidden = YES;
             } else if ([target isKindOfClass:[UIControl class]]) {
-              // 自绘按钮/控件
               UIView *parent = target.superview;
-              if (parent && parent != root && parent.superview != root &&
-                  parent.frame.size.height < 140) {
-                // 列表内的项：连箭头/同行内容一起隐藏
+              NSString *pcn = parent ? NSStringFromClass([parent class]) : @"";
+              // tab 栏/工具容器按类名识别，只隐藏按钮本身，不误杀整栏
+              BOOL isTabContainer = [pcn containsString:@"Tabbar"] ||
+                                    [pcn containsString:@"TabBar"] ||
+                                    [pcn containsString:@"TabView"];
+              if (parent && !isTabContainer && parent != root &&
+                  parent.superview != root && parent.frame.size.height < 140) {
                 parent.hidden = YES;
                 parent.userInteractionEnabled = NO;
               } else {
-                // tab 栏/工具栏等根容器直接子视图：只隐藏按钮本身，避免整栏消失
                 target.hidden = YES;
                 target.userInteractionEnabled = NO;
               }
@@ -85,6 +86,35 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
     }
     kw_hide_text_views(sub, kws, exact);
   }
+}
+
+/* ---------- 执行清理：页面 + 导航栏 ---------- */
+static void kw_cleanup_vc(UIViewController *vc) {
+  kw_hide_text_views(vc.view, @[@"稻壳", @"共享", @"星标"], NO);
+  kw_hide_text_views(vc.view, @[@"立即上传", @"分享给好友", @"上传至云文档",
+                                @"输出为长图片", @"超级PPT", @"更多应用"], NO);
+  NSString *cn = NSStringFromClass([vc class]);
+  if ([cn hasPrefix:@"KWMe"]) {
+    kw_hide_text_views(vc.view, @[@"登入", @"登录", @"享受更多", @"云服务",
+                                  @"云文档", @"会员", @"找回文档", @"消息",
+                                  @"钱包", @"已购", @"收藏", @"活动"], NO);
+  }
+  // 右上角"证"（在导航栏，不在 view 子树）
+  kw_hide_text_views(vc.view, @[@"证"], YES);
+  UINavigationBar *nb = vc.navigationController.navigationBar;
+  if (nb) {
+    kw_hide_text_views(nb, @[@"证"], YES);
+  }
+}
+
+/* ---------- 执行清理：整个窗口（覆盖弹窗层） ---------- */
+static void kw_cleanup_window(void) {
+  UIWindow *w = [UIApplication sharedApplication].windows.firstObject;
+  if (!w) return;
+  kw_hide_text_views(w, @[@"稻壳"], NO);
+  kw_hide_text_views(w, @[@"立即上传", @"分享给好友", @"上传至云文档",
+                          @"输出为长图片", @"超级PPT", @"更多应用"], NO);
+  kw_hide_text_views(w, @[@"证"], YES);
 }
 
 /* ---------- 1. VIP 解锁 ---------- */
@@ -139,22 +169,15 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
 }
 %end
 
-/* ---------- 4. 视图树遍历移除 ---------- */
+/* ---------- 4. 视图清理 ---------- */
 %hook UIViewController
 - (void)viewDidAppear:(BOOL)animated {
   %orig;
-  // 全页面：稻壳儿 tab / 首页共享、星标 / 文档三点弹窗按钮
-  kw_hide_text_views(self.view, @[@"稻壳", @"共享", @"星标"], NO);
-  kw_hide_text_views(self.view, @[@"立即上传", @"分享给好友", @"上传至云文档",
-                                  @"输出为长图片", @"超级PPT", @"更多应用"], NO);
-  // "我的"页面移除云端/会员功能项
-  NSString *cn = NSStringFromClass([self class]);
-  if ([cn hasPrefix:@"KWMe"]) {
-    kw_hide_text_views(self.view, @[@"登入", @"登录", @"享受更多", @"云服务",
-                                    @"云文档", @"会员", @"找回文档", @"消息",
-                                    @"钱包", @"已购", @"收藏", @"活动"], NO);
-  }
-  // 首页右上角"证"按钮（精确匹配单字）
-  kw_hide_text_views(self.view, @[@"证"], YES);
+  kw_cleanup_vc(self);
+  // 弹窗是独立层且晚出现：延迟再清一次全窗口
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.6 * NSEC_PER_SEC),
+                 dispatch_get_main_queue(), ^{
+    kw_cleanup_window();
+  });
 }
 %end
