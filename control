@@ -1,0 +1,8 @@
+Package: com.kingsoft.www.office.wpsoffice
+Name: WPS离线化（禁网+VIP解锁）
+Author: 2014502888
+Description: WPS Office 离线化：NSURLSession 白名单外全拦（去广告/稻壳儿列表/登录/云同步）+ VIP 解锁（稻壳儿/新VIP/PDF转Word）
+Maintainer: 2014502888
+Architecture: iphoneos-arm
+Section: Tweaks
+Version: 1.0.0-1
