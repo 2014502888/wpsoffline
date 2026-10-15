@@ -4,11 +4,44 @@
 @interface KWPhoneMainTabBarController : UITabBarController @end
 
 /* =========================================================
- * WPS Office 离线化 tweak
+ * WPS Office 离线化 tweak v3
  * 1. VIP 解锁（合并自 wpsofficevip.dylib 逆向：稻壳儿 VIP / 新 VIP / PDF转Word）
- * 2. 禁网：NSURLSessionTask 白名单外全部拦截（首页广告/稻壳儿列表/登录/云同步断网，
- *    本地打开 xlsx 完全不受影响）
+ * 2. 禁网：NSURLSessionTask 白名单外全拦（cancel 触发回调，不卡 loading）
+ * 3. 移除"稻壳儿"tab（广覆盖：任意 UITabBarController 的 viewDidLoad/viewDidAppear/setViewControllers:）
+ * 4. 拦截第三方登录跳转（微信/QQ/TIM/支付宝 openURL）
  * ========================================================= */
+
+/* ---------- 通用：移除含"稻壳"的 tab ---------- */
+static void kw_remove_docer_tab(UIViewController *tabVC) {
+  if (![tabVC respondsToSelector:@selector(viewControllers)]) return;
+  NSArray *vcs = [(UITabBarController *)tabVC viewControllers];
+  if (vcs.count == 0) return;
+  NSMutableArray *keep = [NSMutableArray array];
+  for (UIViewController *vc in vcs) {
+    NSString *t = vc.title ?: @"";
+    if (t.length == 0 && [vc respondsToSelector:@selector(tabBarItem)]) {
+      t = vc.tabBarItem.title ?: @"";
+    }
+    if ([t containsString:@"稻壳"]) {
+      continue;   // 跳过稻壳儿 tab
+    }
+    [keep addObject:vc];
+  }
+  if (keep.count > 0 && keep.count != vcs.count) {
+    [(UITabBarController *)tabVC setViewControllers:keep animated:NO];
+  }
+}
+
+/* ---------- 通用：第三方登录跳转是否拦截 ---------- */
+static BOOL kw_block_third_login(NSURL *url) {
+  NSString *s = [url.scheme lowercaseString] ?: @"";
+  if ([s hasPrefix:@"weixin"] || [s hasPrefix:@"weixindicator"] ||
+      [s hasPrefix:@"mqq"] || [s hasPrefix:@"tim"] ||
+      [s hasPrefix:@"wtlogin"] || [s hasPrefix:@"alipay"]) {
+    return YES;
+  }
+  return NO;
+}
 
 /* ---------- 1. VIP 解锁 ---------- */
 %hook KWUserDocerVip
@@ -45,28 +78,36 @@
 }
 %end
 
-/* ---------- 3. 移除主界面"稻壳儿"tab ---------- */
-%hook KWPhoneMainTabBarController
+/* ---------- 3. 移除"稻壳儿"tab（广覆盖 UITabBarController） ---------- */
+%hook UITabBarController
 - (void)viewDidLoad {
   %orig;
-  if ([self respondsToSelector:@selector(viewControllers)]) {
-    NSArray *vcs = [self viewControllers];
-    if (vcs.count > 0) {
-      NSMutableArray *keep = [NSMutableArray array];
-      for (UIViewController *vc in vcs) {
-        NSString *t = vc.title ?: @"";
-        if (t.length == 0 && [vc respondsToSelector:@selector(tabBarItem)]) {
-          t = vc.tabBarItem.title ?: @"";
-        }
-        if ([t containsString:@"稻壳"]) {
-          continue;   // 跳过稻壳儿 tab
-        }
-        [keep addObject:vc];
-      }
-      if (keep.count > 0 && keep.count != vcs.count) {
-        self.viewControllers = keep;
-      }
+  kw_remove_docer_tab(self);
+}
+- (void)viewDidAppear:(BOOL)animated {
+  %orig;
+  kw_remove_docer_tab(self);
+}
+- (void)setViewControllers:(NSArray *)viewControllers animated:(BOOL)animated {
+  %orig;
+  kw_remove_docer_tab(self);
+}
+%end
+
+/* ---------- 4. 拦截第三方登录跳转（微信/QQ/TIM/支付宝） ---------- */
+%hook UIApplication
+- (BOOL)openURL:(NSURL *)url {
+  if (kw_block_third_login(url)) return NO;
+  return %orig;
+}
+- (BOOL)openURL:(NSURL *)url options:(NSDictionary *)options completionHandler:(id)completion {
+  if (kw_block_third_login(url)) {
+    if (completion) {
+      void (^cb)(BOOL) = completion;
+      cb(NO);
     }
+    return NO;
   }
+  return %orig;
 }
 %end
