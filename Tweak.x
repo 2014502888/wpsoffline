@@ -7,13 +7,13 @@
 @interface KWPhoneMainTabBarController : KWTabBarController @end
 
 /* =========================================================
- * WPS Office 离线化 tweak v8
+ * WPS Office 离线化 tweak v9
  * 1. VIP 解锁
  * 2. 禁网：NSURLSessionTask 白名单外全拦
  * 3. 登录跳转拦截（scheme + 域名）
- * 4. 视图树遍历移除（tab 容器按类名识别，不误杀整栏）
- * 5. 右上角"证"按钮（遍历 navigationBar）
- * 6. 弹窗按钮（延迟 0.6s 遍历 keyWindow 覆盖弹窗层）
+ * 4. 视图树遍历移除：tab 栏按"屏幕底部条"识别（只藏按钮不藏整栏）
+ * 5. "证"按钮：view 树 + navigationBar + navigationItem 三层
+ * 6. 弹窗按钮：UIWindow addSubview 即时清理 + 延迟全窗口清理
  * ========================================================= */
 
 /* ---------- 通用：第三方登录跳转是否拦截 ---------- */
@@ -62,13 +62,14 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
               cell.contentView.hidden = YES;
             } else if ([target isKindOfClass:[UIControl class]]) {
               UIView *parent = target.superview;
-              NSString *pcn = parent ? NSStringFromClass([parent class]) : @"";
-              // tab 栏/工具容器按类名识别，只隐藏按钮本身，不误杀整栏
-              BOOL isTabContainer = [pcn containsString:@"Tabbar"] ||
-                                    [pcn containsString:@"TabBar"] ||
-                                    [pcn containsString:@"TabView"];
-              if (parent && !isTabContainer && parent != root &&
-                  parent.superview != root && parent.frame.size.height < 140) {
+              // 屏幕底部条（tab 栏/操作栏）：只隐藏按钮本身，不误杀整栏
+              BOOL isBottomBar = NO;
+              if (parent) {
+                CGRect pf = [parent convertRect:parent.bounds toView:root];
+                isBottomBar = (CGRectGetMaxY(pf) > [UIScreen mainScreen].bounds.size.height - 130);
+              }
+              if (parent && !isBottomBar && parent != root &&
+                  parent.frame.size.height < 140) {
                 parent.hidden = YES;
                 parent.userInteractionEnabled = NO;
               } else {
@@ -88,7 +89,7 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
   }
 }
 
-/* ---------- 执行清理：页面 + 导航栏 ---------- */
+/* ---------- 清理：页面 + 导航栏 + navigationItem ---------- */
 static void kw_cleanup_vc(UIViewController *vc) {
   kw_hide_text_views(vc.view, @[@"稻壳", @"共享", @"星标"], NO);
   kw_hide_text_views(vc.view, @[@"立即上传", @"分享给好友", @"上传至云文档",
@@ -99,15 +100,25 @@ static void kw_cleanup_vc(UIViewController *vc) {
                                   @"云文档", @"会员", @"找回文档", @"消息",
                                   @"钱包", @"已购", @"收藏", @"活动"], NO);
   }
-  // 右上角"证"（在导航栏，不在 view 子树）
+  // "证"：view 树
   kw_hide_text_views(vc.view, @[@"证"], YES);
+  // "证"：导航栏
   UINavigationBar *nb = vc.navigationController.navigationBar;
   if (nb) {
     kw_hide_text_views(nb, @[@"证"], YES);
   }
+  // "证"：navigationItem（右按钮标题或自定义视图）
+  UINavigationItem *ni = vc.navigationItem;
+  if (ni.rightBarButtonItem) {
+    if ([ni.rightBarButtonItem.title isEqualToString:@"证"]) {
+      ni.rightBarButtonItem = nil;
+    } else if (ni.rightBarButtonItem.customView) {
+      kw_hide_text_views(ni.rightBarButtonItem.customView, @[@"证"], YES);
+    }
+  }
 }
 
-/* ---------- 执行清理：整个窗口（覆盖弹窗层） ---------- */
+/* ---------- 清理：整个窗口（覆盖弹窗层） ---------- */
 static void kw_cleanup_window(void) {
   UIWindow *w = [UIApplication sharedApplication].windows.firstObject;
   if (!w) return;
@@ -174,10 +185,25 @@ static void kw_cleanup_window(void) {
 - (void)viewDidAppear:(BOOL)animated {
   %orig;
   kw_cleanup_vc(self);
-  // 弹窗是独立层且晚出现：延迟再清一次全窗口
+  // 弹窗层晚出现：延迟再清全窗口
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.6 * NSEC_PER_SEC),
                  dispatch_get_main_queue(), ^{
     kw_cleanup_window();
+  });
+}
+%end
+
+/* ---------- 5. 弹窗即时清理：新 add 的视图 0.5s 后检查 ---------- */
+%hook UIWindow
+- (void)addSubview:(UIView *)view {
+  %orig;
+  __weak UIView *wv = view;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC),
+                 dispatch_get_main_queue(), ^{
+    if (wv) {
+      kw_hide_text_views(wv, @[@"立即上传", @"分享给好友", @"上传至云文档",
+                               @"输出为长图片", @"超级PPT", @"更多应用"], NO);
+    }
   });
 }
 %end
