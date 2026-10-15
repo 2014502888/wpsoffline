@@ -1,5 +1,8 @@
 #import <UIKit/UIKit.h>
 
+/* WPS 私有类声明：告诉编译器 KWPhoneMainTabBarController 是 UITabBarController 子类 */
+@interface KWPhoneMainTabBarController : UITabBarController @end
+
 /* =========================================================
  * WPS Office 离线化 tweak
  * 1. VIP 解锁（合并自 wpsofficevip.dylib 逆向：稻壳儿 VIP / 新 VIP / PDF转Word）
