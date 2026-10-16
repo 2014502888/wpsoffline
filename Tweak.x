@@ -6,17 +6,9 @@
 @interface KWTabBarController : UIViewController @end
 @interface KWPhoneMainTabBarController : KWTabBarController @end
 
-/* =========================================================
- * WPS Office 离线化 tweak v9
- * 1. VIP 解锁
- * 2. 禁网：NSURLSessionTask 白名单外全拦
- * 3. 登录跳转拦截（scheme + 域名）
- * 4. 视图树遍历移除：tab 栏按"屏幕底部条"识别（只藏按钮不藏整栏）
- * 5. "证"按钮：view 树 + navigationBar + navigationItem 三层
- * 6. 弹窗按钮：UIWindow addSubview 即时清理 + 延迟全窗口清理
- * ========================================================= */
+/* WPS Office 离线化 tweak v10 */
 
-/* ---------- 通用：第三方登录跳转是否拦截 ---------- */
+/* ---------- 第三方登录跳转拦截 ---------- */
 static BOOL kw_block_third_login(NSURL *url) {
   NSString *s = [url.scheme lowercaseString] ?: @"";
   NSString *h = [url.host lowercaseString] ?: @"";
@@ -34,10 +26,23 @@ static BOOL kw_block_third_login(NSURL *url) {
   return NO;
 }
 
-/* ---------- 通用：视图树遍历移除 ---------- */
+/* ---------- 视图树遍历移除 ---------- */
 static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
   if (!root) return;
   for (UIView *sub in root.subviews) {
+    if ([sub isKindOfClass:[UIControl class]] || [sub isKindOfClass:[UIImageView class]]) {
+      NSString *al = sub.accessibilityLabel;
+      if (al.length > 0) {
+        for (NSString *k in kws) {
+          BOOL hit = exact ? [al isEqualToString:k] : [al containsString:k];
+          if (hit) {
+            sub.hidden = YES;
+            sub.userInteractionEnabled = NO;
+            break;
+          }
+        }
+      }
+    }
     if ([sub isKindOfClass:[UILabel class]]) {
       NSString *t = ((UILabel *)sub).text;
       if (t.length > 0) {
@@ -61,20 +66,39 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
               cell.userInteractionEnabled = NO;
               cell.contentView.hidden = YES;
             } else if ([target isKindOfClass:[UIControl class]]) {
-              UIView *parent = target.superview;
-              // 屏幕底部条（tab 栏/操作栏）：只隐藏按钮本身，不误杀整栏
-              BOOL isBottomBar = NO;
-              if (parent) {
-                CGRect pf = [parent convertRect:parent.bounds toView:root];
-                isBottomBar = (CGRectGetMaxY(pf) > [UIScreen mainScreen].bounds.size.height - 130);
+              int ctrlCount = 0;
+              for (UIView *sv in target.subviews) {
+                if ([sv isKindOfClass:[UIControl class]]) ctrlCount++;
               }
-              if (parent && !isBottomBar && parent != root &&
-                  parent.frame.size.height < 140) {
-                parent.hidden = YES;
-                parent.userInteractionEnabled = NO;
+              if (ctrlCount >= 2) {
+                UIView *cur = sub.superview;
+                UIView *unit = sub;
+                while (cur && cur != target) {
+                  BOOL hasCtrl = NO;
+                  for (UIView *sv in cur.subviews) {
+                    if ([sv isKindOfClass:[UIControl class]]) { hasCtrl = YES; break; }
+                  }
+                  if (!hasCtrl) { unit = cur; break; }
+                  cur = cur.superview;
+                }
+                if (unit == sub) unit = sub.superview ?: sub;
+                unit.hidden = YES;
+                unit.userInteractionEnabled = NO;
               } else {
-                target.hidden = YES;
-                target.userInteractionEnabled = NO;
+                UIView *parent = target.superview;
+                BOOL isBottomBar = NO;
+                if (parent) {
+                  CGRect pf = [parent convertRect:parent.bounds toView:root];
+                  isBottomBar = (CGRectGetMaxY(pf) > [UIScreen mainScreen].bounds.size.height - 130);
+                }
+                if (parent && !isBottomBar && parent != root &&
+                    parent.frame.size.height < 140) {
+                  parent.hidden = YES;
+                  parent.userInteractionEnabled = NO;
+                } else {
+                  target.hidden = YES;
+                  target.userInteractionEnabled = NO;
+                }
               }
             } else {
               target.hidden = YES;
@@ -100,14 +124,11 @@ static void kw_cleanup_vc(UIViewController *vc) {
                                   @"云文档", @"会员", @"找回文档", @"消息",
                                   @"钱包", @"已购", @"收藏", @"活动"], NO);
   }
-  // "证"：view 树
   kw_hide_text_views(vc.view, @[@"证"], YES);
-  // "证"：导航栏
   UINavigationBar *nb = vc.navigationController.navigationBar;
   if (nb) {
     kw_hide_text_views(nb, @[@"证"], YES);
   }
-  // "证"：navigationItem（右按钮标题或自定义视图）
   UINavigationItem *ni = vc.navigationItem;
   if (ni.rightBarButtonItem) {
     if ([ni.rightBarButtonItem.title isEqualToString:@"证"]) {
@@ -118,7 +139,7 @@ static void kw_cleanup_vc(UIViewController *vc) {
   }
 }
 
-/* ---------- 清理：整个窗口（覆盖弹窗层） ---------- */
+/* ---------- 清理：整个窗口 ---------- */
 static void kw_cleanup_window(void) {
   UIWindow *w = [UIApplication sharedApplication].windows.firstObject;
   if (!w) return;
@@ -144,7 +165,7 @@ static void kw_cleanup_window(void) {
 - (BOOL)isBuy { return YES; }
 %end
 
-/* ---------- 2. 禁网（白名单外全拦） ---------- */
+/* ---------- 2. 禁网 ---------- */
 %hook NSURLSessionTask
 - (void)resume {
   NSString *u = self.originalRequest.URL.absoluteString;
@@ -162,7 +183,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 3. 拦截第三方登录跳转 ---------- */
+/* ---------- 3. 登录跳转拦截 ---------- */
 %hook UIApplication
 - (BOOL)openURL:(NSURL *)url {
   if (kw_block_third_login(url)) return NO;
@@ -185,7 +206,6 @@ static void kw_cleanup_window(void) {
 - (void)viewDidAppear:(BOOL)animated {
   %orig;
   kw_cleanup_vc(self);
-  // 弹窗层晚出现：延迟再清全窗口
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.6 * NSEC_PER_SEC),
                  dispatch_get_main_queue(), ^{
     kw_cleanup_window();
@@ -193,7 +213,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 5. 弹窗即时清理：新 add 的视图 0.5s 后检查 ---------- */
+/* ---------- 5. 动态视图即时清理 ---------- */
 %hook UIWindow
 - (void)addSubview:(UIView *)view {
   %orig;
@@ -203,6 +223,7 @@ static void kw_cleanup_window(void) {
     if (wv) {
       kw_hide_text_views(wv, @[@"立即上传", @"分享给好友", @"上传至云文档",
                                @"输出为长图片", @"超级PPT", @"更多应用"], NO);
+      kw_hide_text_views(wv, @[@"证"], YES);
     }
   });
 }
