@@ -6,15 +6,10 @@
 @interface KWTabBarController : UIViewController @end
 @interface KWPhoneMainTabBarController : KWTabBarController @end
 
-/* WPS Office 离线化 tweak v11
- * 基于反编译结果精确 hook：
- * 1. VIP 解锁
- * 2. 禁网
- * 3. 登录跳转拦截
- * 4. tab 栏：KWPhoneMainTabBarController setBottomTags: + KWCustomTabbarView setTabbarButtonArray: 数据源过滤稻壳儿
- * 5. "证"按钮：KSOComponentTopBar showSafeDocIcon:/docSecurityMarkView + KWHomeNavBanner 跳转
- * 6. 三点弹窗：KWMenuView layoutSubviews 清理
- * 7. 我的页/视图兜底清理保留
+/* WPS Office 离线化 tweak v13
+ * 视图隐藏全面改"宽度法"：只隐藏宽度 < 屏幕 80% 的独立单元（tab 项/按钮/菜单项），
+ * 绝不隐藏全宽容器（修复"我"页黑屏 = 登入 banner 被整块隐藏）
+ * tab 稻壳儿：在 KWPhoneMainTabBarController 的 tab 栏视图上专门遍历（只藏那一项）
  */
 
 /* ---------- 第三方登录跳转拦截 ---------- */
@@ -35,7 +30,24 @@ static BOOL kw_block_third_login(NSURL *url) {
   return NO;
 }
 
-/* ---------- 视图树遍历移除（兜底） ---------- */
+/* ---------- 宽度法：隐藏叶子独立单元（不隐藏全宽容器） ---------- */
+static void kw_hide_leaf_unit(UIView *leaf, UIView *root) {
+  CGFloat screenW = [UIScreen mainScreen].bounds.size.width;
+  UIView *cur = leaf;
+  UIView *hide = leaf;
+  while (cur && cur != root && cur.superview) {
+    if (cur.frame.size.width < screenW * 0.8) {
+      hide = cur;          // 记住最靠近但仍是窄单元的容器（往上找 tab 项/独立项）
+    } else {
+      break;               // 遇到全宽容器（页面/整栏）停止
+    }
+    cur = cur.superview;
+  }
+  hide.hidden = YES;
+  hide.userInteractionEnabled = NO;
+}
+
+/* ---------- 视图树遍历移除（宽度法） ---------- */
 static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
   if (!root) return;
   for (UIView *sub in root.subviews) {
@@ -58,60 +70,32 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
         for (NSString *k in kws) {
           BOOL hit = exact ? [t isEqualToString:k] : [t containsString:k];
           if (hit) {
+            /* 先找 cell（列表行整体隐藏） */
             UIView *v = sub;
-            UIView *last = sub;
-            while (v && !([v isKindOfClass:[UIControl class]] ||
-                          [v isKindOfClass:[UITableViewCell class]] ||
-                          [v isKindOfClass:[UICollectionViewCell class]])) {
-              last = v;
+            UIView *cell = nil;
+            while (v && v != root) {
+              if ([v isKindOfClass:[UITableViewCell class]] ||
+                  [v isKindOfClass:[UICollectionViewCell class]]) {
+                cell = v;
+                break;
+              }
               v = v.superview;
             }
-            UIView *target = v ?: last;
-            if ([target isKindOfClass:[UITableViewCell class]]) {
-              UITableViewCell *cell = (UITableViewCell *)target;
-              cell.accessoryType = UITableViewCellAccessoryNone;
-              cell.accessoryView = nil;
-              cell.hidden = YES;
-              cell.userInteractionEnabled = NO;
-              cell.contentView.hidden = YES;
-            } else if ([target isKindOfClass:[UIControl class]]) {
-              int ctrlCount = 0;
-              for (UIView *sv in target.subviews) {
-                if ([sv isKindOfClass:[UIControl class]]) ctrlCount++;
-              }
-              if (ctrlCount >= 2) {
-                UIView *cur = sub.superview;
-                UIView *unit = sub;
-                while (cur && cur != target) {
-                  BOOL hasCtrl = NO;
-                  for (UIView *sv in cur.subviews) {
-                    if ([sv isKindOfClass:[UIControl class]]) { hasCtrl = YES; break; }
-                  }
-                  if (!hasCtrl) { unit = cur; break; }
-                  cur = cur.superview;
-                }
-                if (unit == sub) unit = sub.superview ?: sub;
-                unit.hidden = YES;
-                unit.userInteractionEnabled = NO;
+            if (cell) {
+              if ([cell isKindOfClass:[UITableViewCell class]]) {
+                UITableViewCell *c = (UITableViewCell *)cell;
+                c.accessoryType = UITableViewCellAccessoryNone;
+                c.accessoryView = nil;
+                c.hidden = YES;
+                c.userInteractionEnabled = NO;
+                c.contentView.hidden = YES;
               } else {
-                UIView *parent = target.superview;
-                BOOL isBottomBar = NO;
-                if (parent) {
-                  CGRect pf = [parent convertRect:parent.bounds toView:root];
-                  isBottomBar = (CGRectGetMaxY(pf) > [UIScreen mainScreen].bounds.size.height - 130);
-                }
-                if (parent && !isBottomBar && parent != root &&
-                    parent.frame.size.height < 140) {
-                  parent.hidden = YES;
-                  parent.userInteractionEnabled = NO;
-                } else {
-                  target.hidden = YES;
-                  target.userInteractionEnabled = NO;
-                }
+                cell.hidden = YES;
+                cell.userInteractionEnabled = NO;
               }
             } else {
-              target.hidden = YES;
-              target.userInteractionEnabled = NO;
+              /* 非 cell：宽度法隐藏独立单元（不隐藏全宽容器） */
+              kw_hide_leaf_unit(sub, root);
             }
             break;
           }
@@ -124,9 +108,6 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
 
 /* ---------- 清理：页面 + 导航栏 + navigationItem ---------- */
 static void kw_cleanup_vc(UIViewController *vc) {
-  /* 注意：不再视图遍历 tab 关键词（稻壳/共享/星标）——WPS tab 栏容器是 UIControl，
-     视图遍历会把整个 tab 栏容器当"按钮"隐藏导致整栏按钮全灭。tab 移除走数据源
-     (setBottomTags:/setTabbarButtonArray:) hook。 */
   kw_hide_text_views(vc.view, @[@"立即上传", @"分享给好友", @"上传至云文档",
                                 @"输出为长图片", @"超级PPT", @"更多应用"], NO);
   NSString *cn = NSStringFromClass([vc class]);
@@ -264,7 +245,30 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 6. "证"按钮（安全文档标记） ---------- */
+/* ---------- 6. tab 栏视图兜底：只隐藏稻壳儿那一项（宽度法） ---------- */
+%hook KWPhoneMainTabBarController
+- (void)viewDidLoad {
+  %orig;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.6 * NSEC_PER_SEC),
+                 dispatch_get_main_queue(), ^{
+    UIView *tb = nil;
+    @try { tb = [self valueForKey:@"phoneMainTabBarView"]; } @catch (NSException *e) {}
+    if (tb) {
+      kw_hide_text_views(tb, @[@"稻壳"], NO);
+    }
+  });
+}
+- (void)viewDidAppear:(BOOL)animated {
+  %orig;
+  UIView *tb = nil;
+  @try { tb = [self valueForKey:@"phoneMainTabBarView"]; } @catch (NSException *e) {}
+  if (tb) {
+    kw_hide_text_views(tb, @[@"稻壳"], NO);
+  }
+}
+%end
+
+/* ---------- 7. "证"按钮（安全文档标记） ---------- */
 %hook KSOComponentTopBar
 - (void)showSafeDocIcon:(BOOL)show {
   %orig(NO);
@@ -274,7 +278,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 7. 首页导航横幅（证/跳转兜底） ---------- */
+/* ---------- 8. 首页导航横幅（证/跳转兜底） ---------- */
 %hook KWHomeNavBanner
 - (void)setJumpUrl:(NSString *)url {
   %orig(nil);
@@ -284,7 +288,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 8. 三点弹窗菜单清理 ---------- */
+/* ---------- 9. 三点弹窗菜单清理 ---------- */
 %hook KWMenuView
 - (void)layoutSubviews {
   %orig;
@@ -293,7 +297,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 9. 页面视图兜底清理 ---------- */
+/* ---------- 10. 页面视图兜底清理 ---------- */
 %hook UIViewController
 - (void)viewDidAppear:(BOOL)animated {
   %orig;
@@ -305,7 +309,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 10. 动态视图兜底清理 ---------- */
+/* ---------- 11. 动态视图兜底清理 ---------- */
 %hook UIWindow
 - (void)addSubview:(UIView *)view {
   %orig;
