@@ -6,7 +6,16 @@
 @interface KWTabBarController : UIViewController @end
 @interface KWPhoneMainTabBarController : KWTabBarController @end
 
-/* WPS Office 离线化 tweak v10 */
+/* WPS Office 离线化 tweak v11
+ * 基于反编译结果精确 hook：
+ * 1. VIP 解锁
+ * 2. 禁网
+ * 3. 登录跳转拦截
+ * 4. tab 栏：KWPhoneMainTabBarController setBottomTags: + KWCustomTabbarView setTabbarButtonArray: 数据源过滤稻壳儿
+ * 5. "证"按钮：KSOComponentTopBar showSafeDocIcon:/docSecurityMarkView + KWHomeNavBanner 跳转
+ * 6. 三点弹窗：KWMenuView layoutSubviews 清理
+ * 7. 我的页/视图兜底清理保留
+ */
 
 /* ---------- 第三方登录跳转拦截 ---------- */
 static BOOL kw_block_third_login(NSURL *url) {
@@ -26,7 +35,7 @@ static BOOL kw_block_third_login(NSURL *url) {
   return NO;
 }
 
-/* ---------- 视图树遍历移除 ---------- */
+/* ---------- 视图树遍历移除（兜底） ---------- */
 static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
   if (!root) return;
   for (UIView *sub in root.subviews) {
@@ -201,7 +210,89 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 4. 视图清理 ---------- */
+/* ---------- 4. tab 数据源过滤稻壳儿 ---------- */
+%hook KWPhoneMainTabBarController
+- (void)setBottomTags:(NSArray *)tags {
+  if (tags) {
+    NSMutableArray *m = [NSMutableArray array];
+    for (id tag in tags) {
+      BOOL bad = NO;
+      NSString *d = [tag description];
+      if (d && [d containsString:@"稻壳"]) bad = YES;
+      if (!bad) {
+        for (NSString *key in @[@"title", @"name", @"text", @"desc", @"label"]) {
+          id v = nil;
+          @try { v = [tag valueForKey:key]; } @catch (NSException *e) {}
+          if ([v isKindOfClass:[NSString class]] && [(NSString *)v containsString:@"稻壳"]) {
+            bad = YES;
+            break;
+          }
+        }
+      }
+      if (!bad) [m addObject:tag];
+    }
+    %orig(m);
+  } else {
+    %orig;
+  }
+}
+%end
+
+/* ---------- 5. tab 按钮数组过滤 ---------- */
+%hook KWCustomTabbarView
+- (void)setTabbarButtonArray:(NSArray *)arr {
+  if (arr) {
+    NSMutableArray *m = [NSMutableArray array];
+    for (UIView *b in arr) {
+      NSString *t = @"";
+      if ([b isKindOfClass:[UIButton class]]) {
+        t = [t stringByAppendingString:((UIButton *)b).titleLabel.text ?: @""];
+      }
+      for (UIView *sv in b.subviews) {
+        if ([sv isKindOfClass:[UILabel class]]) {
+          t = [t stringByAppendingString:((UILabel *)sv).text ?: @""];
+        }
+      }
+      if ([t containsString:@"稻壳"]) continue;
+      [m addObject:b];
+    }
+    %orig(m);
+  } else {
+    %orig;
+  }
+}
+%end
+
+/* ---------- 6. "证"按钮（安全文档标记） ---------- */
+%hook KSOComponentTopBar
+- (void)showSafeDocIcon:(BOOL)show {
+  %orig(NO);
+}
+- (void)setDocSecurityMarkView:(UIView *)v {
+  %orig(nil);
+}
+%end
+
+/* ---------- 7. 首页导航横幅（证/跳转兜底） ---------- */
+%hook KWHomeNavBanner
+- (void)setJumpUrl:(NSString *)url {
+  %orig(nil);
+}
+- (void)setIsDisplayIcon:(BOOL)flag {
+  %orig(NO);
+}
+%end
+
+/* ---------- 8. 三点弹窗菜单清理 ---------- */
+%hook KWMenuView
+- (void)layoutSubviews {
+  %orig;
+  kw_hide_text_views(self, @[@"立即上传", @"分享给好友", @"上传至云文档",
+                             @"输出为长图片", @"超级PPT", @"更多应用"], NO);
+}
+%end
+
+/* ---------- 9. 页面视图兜底清理 ---------- */
 %hook UIViewController
 - (void)viewDidAppear:(BOOL)animated {
   %orig;
@@ -213,7 +304,7 @@ static void kw_cleanup_window(void) {
 }
 %end
 
-/* ---------- 5. 动态视图即时清理 ---------- */
+/* ---------- 10. 动态视图兜底清理 ---------- */
 %hook UIWindow
 - (void)addSubview:(UIView *)view {
   %orig;
