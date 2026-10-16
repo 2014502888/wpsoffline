@@ -124,7 +124,9 @@ static void kw_hide_text_views(UIView *root, NSArray *kws, BOOL exact) {
 
 /* ---------- 清理：页面 + 导航栏 + navigationItem ---------- */
 static void kw_cleanup_vc(UIViewController *vc) {
-  kw_hide_text_views(vc.view, @[@"稻壳", @"共享", @"星标"], NO);
+  /* 注意：不再视图遍历 tab 关键词（稻壳/共享/星标）——WPS tab 栏容器是 UIControl，
+     视图遍历会把整个 tab 栏容器当"按钮"隐藏导致整栏按钮全灭。tab 移除走数据源
+     (setBottomTags:/setTabbarButtonArray:) hook。 */
   kw_hide_text_views(vc.view, @[@"立即上传", @"分享给好友", @"上传至云文档",
                                 @"输出为长图片", @"超级PPT", @"更多应用"], NO);
   NSString *cn = NSStringFromClass([vc class]);
@@ -152,7 +154,6 @@ static void kw_cleanup_vc(UIViewController *vc) {
 static void kw_cleanup_window(void) {
   UIWindow *w = [UIApplication sharedApplication].windows.firstObject;
   if (!w) return;
-  kw_hide_text_views(w, @[@"稻壳"], NO);
   kw_hide_text_views(w, @[@"立即上传", @"分享给好友", @"上传至云文档",
                           @"输出为长图片", @"超级PPT", @"更多应用"], NO);
   kw_hide_text_views(w, @[@"证"], YES);
